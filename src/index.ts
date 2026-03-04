@@ -1,8 +1,8 @@
+import 'dotenv/config';   // ← MUST be first: loads .env before any module reads process.env
 import express from 'express';
 import cors from 'cors';
 import helmet from 'helmet';
 import morgan from 'morgan';
-import dotenv from 'dotenv';
 import { connectDB } from './config/db';
 import { errorHandler } from './middleware/errorHandler';
 
@@ -15,7 +15,6 @@ import userRoutes    from './routes/users';
 import reviewRoutes  from './routes/reviews';
 import paymentRoutes from './routes/payment';
 
-dotenv.config();
 connectDB();
 
 const app = express();

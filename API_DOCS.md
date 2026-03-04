@@ -2,6 +2,15 @@
 
 Base URL: `http://localhost:5000/api`
 
+Google OAuth env setup (for `/auth/google`):
+```env
+GOOGLE_CLIENT_ID=991325160242-9h951uh2f6uknm1hbgtli40nubmdau0h.apps.googleusercontent.com
+GOOGLE_CLIENT_SECRET=<your-google-client-secret>
+GOOGLE_REDIRECT_URI=http://localhost:5000/api/auth/google/callback
+# Optional: where backend should redirect after successful callback
+GOOGLE_OAUTH_SUCCESS_REDIRECT=http://localhost:5173/auth/google/callback
+```
+
 All protected routes require the header:
 ```
 Authorization: Bearer <token>
@@ -81,6 +90,65 @@ Login with email and password.
 **Error `401`**
 ```json
 { "message": "Invalid credentials" }
+```
+
+---
+
+### GET `/auth/google`
+Start Google OAuth. Frontend should open this URL directly (or use a custom value via `VITE_GOOGLE_OAUTH_URL`).
+
+**Behavior**
+- Redirects user to Google consent screen.
+- Optional query `state` is forwarded.
+
+---
+
+### GET `/auth/google/callback`
+Google OAuth callback endpoint.
+
+**Behavior**
+- Exchanges Google `code` for user identity.
+- Creates/logs in user and issues app JWT.
+- If `GOOGLE_OAUTH_SUCCESS_REDIRECT` is set, redirects to that URL with query params:
+  - `token=<jwt>`
+  - `access_token=<jwt>`
+  - `jwt=<jwt>`
+- If `GOOGLE_OAUTH_SUCCESS_REDIRECT` is not set, responds with JSON:
+```json
+{
+  "token": "<jwt>",
+  "user": {
+    "id": "...",
+    "name": "...",
+    "email": "...",
+    "role": "customer"
+  }
+}
+```
+
+---
+
+### POST `/auth/google/callback`
+Code exchange endpoint for SPA/native flows.
+
+**Request Body**
+```json
+{ "code": "google_auth_code" }
+```
+
+**Response `200`**
+```json
+{
+  "token": "<jwt>",
+  "access_token": "<jwt>",
+  "jwt": "<jwt>",
+  "user": {
+    "id": "...",
+    "name": "...",
+    "email": "...",
+    "role": "customer"
+  }
+}
 ```
 
 ---
