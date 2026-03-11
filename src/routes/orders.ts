@@ -45,16 +45,43 @@ router.get('/my', protect, async (req: Request, res: Response) => {
 /* ── GET /api/orders  (Admin) ─────────────────────────────── */
 router.get('/', protect, adminOnly, async (req: Request, res: Response) => {
   try {
-    const { status, page = '1', limit = '20' } = req.query as Record<string, string>;
-    const query: Record<string, unknown> = status ? { status } : {};
-    const skip = (Number(page) - 1) * Number(limit);
+    const {
+      status, userId, search,
+      from, to,
+      page = '1', limit = '20',
+    } = req.query as Record<string, string>;
 
-    const [orders, total] = await Promise.all([
-      Order.find(query).populate('user', 'name email').skip(skip).limit(Number(limit)).sort({ createdAt: -1 }),
+    const query: Record<string, unknown> = {};
+    if (status) query.status = status;
+    if (userId) query.user   = userId;
+    if (from || to) {
+      query.createdAt = {
+        ...(from ? { $gte: new Date(from) } : {}),
+        ...(to   ? { $lte: new Date(to)   } : {}),
+      };
+    }
+
+    const pageNum  = Math.max(1, parseInt(page,  10) || 1);
+    const limitNum = Math.min(100, parseInt(limit, 10) || 20);
+    const skip     = (pageNum - 1) * limitNum;
+
+    const [items, total] = await Promise.all([
+      Order.find(query)
+        .populate('user', 'name email')
+        .skip(skip)
+        .limit(limitNum)
+        .sort({ createdAt: -1 }),
       Order.countDocuments(query),
     ]);
 
-    res.json({ orders, total, page: Number(page), pages: Math.ceil(total / Number(limit)) });
+    // search by user name/email after populate
+    const filtered = search
+      ? items.filter((o: any) =>
+          o.user?.name?.toLowerCase().includes(search.toLowerCase()) ||
+          o.user?.email?.toLowerCase().includes(search.toLowerCase()))
+      : items;
+
+    res.json({ items: filtered, total, page: pageNum, limit: limitNum, totalPages: Math.ceil(total / limitNum) });
   } catch (err: any) {
     res.status(500).json({ message: err.message });
   }
@@ -107,6 +134,17 @@ router.put('/:id/status', protect, adminOnly, async (req: Request, res: Response
     );
     if (!order) return res.status(404).json({ message: 'Order not found' });
     res.json(order);
+  } catch (err: any) {
+    res.status(500).json({ message: err.message });
+  }
+});
+
+/* ── DELETE /api/orders/:id  (Admin) ────────────────────── */
+router.delete('/:id', protect, adminOnly, async (req: Request, res: Response) => {
+  try {
+    const order = await Order.findByIdAndDelete(req.params.id);
+    if (!order) return res.status(404).json({ message: 'Order not found' });
+    res.json({ message: 'Deleted successfully' });
   } catch (err: any) {
     res.status(500).json({ message: err.message });
   }

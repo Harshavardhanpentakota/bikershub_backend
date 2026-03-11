@@ -20,6 +20,8 @@ export interface IUser extends Document {
   addresses: IAddress[];
   wishlist: mongoose.Types.ObjectId[];
   role: 'customer' | 'admin';
+  isActive: boolean;
+  bannedReason?: string;
   comparePassword(plain: string): Promise<boolean>;
 }
 
@@ -43,8 +45,10 @@ const UserSchema = new Schema<IUser>(
     password:  { type: String, required: true, minlength: 6 },
     phone:     String,
     addresses: [AddressSchema],
-    wishlist:  [{ type: Schema.Types.ObjectId, ref: 'Product' }],
-    role:      { type: String, enum: ['customer', 'admin'], default: 'customer' },
+    wishlist:      [{ type: Schema.Types.ObjectId, ref: 'Product' }],
+    role:          { type: String, enum: ['customer', 'admin'], default: 'customer' },
+    isActive:      { type: Boolean, default: true },
+    bannedReason:  { type: String },
   },
   { timestamps: true }
 );

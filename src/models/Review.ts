@@ -7,6 +7,8 @@ export interface IReview extends Document {
   rating: number;
   comment: string;
   verified: boolean;
+  flagged: boolean;
+  flagReason?: string;
 }
 
 const ReviewSchema = new Schema<IReview>(
@@ -16,7 +18,9 @@ const ReviewSchema = new Schema<IReview>(
     userName: String,
     rating:   { type: Number, required: true, min: 1, max: 5 },
     comment:  { type: String, required: true },
-    verified: { type: Boolean, default: false },
+    verified:   { type: Boolean, default: false },
+    flagged:    { type: Boolean, default: false },
+    flagReason: { type: String },
   },
   { timestamps: true }
 );

@@ -14,6 +14,7 @@ import orderRoutes   from './routes/orders';
 import userRoutes    from './routes/users';
 import reviewRoutes  from './routes/reviews';
 import paymentRoutes from './routes/payment';
+import adminRoutes   from './routes/admin';
 
 connectDB();
 
@@ -48,6 +49,7 @@ app.use('/api/orders',   orderRoutes);
 app.use('/api/users',    userRoutes);
 app.use('/api/reviews',  reviewRoutes);
 app.use('/api/payment',  paymentRoutes);
+app.use('/api/admin',    adminRoutes);
 
 // ── Global error handler ────────────────────────────────────
 app.use(errorHandler);
