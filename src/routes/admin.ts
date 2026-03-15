@@ -387,6 +387,98 @@ router.post('/ai-insights/generate', async (_req: Request, res: Response) => {
   }
 });
 
+/* POST /api/admin/ai-insights/gemini  — real Gemini AI analysis */
+router.post('/ai-insights/gemini', async (_req: Request, res: Response) => {
+  try {
+    const apiKey = process.env.GEMINI_API_KEY;
+    if (!apiKey) {
+      return res.status(503).json({ message: 'GEMINI_API_KEY is not set in backend .env. Add GEMINI_API_KEY=your_key to .env and restart the server.' });
+    }
+
+    const thirtyDA = new Date();
+    thirtyDA.setDate(thirtyDA.getDate() - 30);
+
+    const [products, recentOrders, recentReviews, totalUsers, newUsers] = await Promise.all([
+      Product.find().select('name category stockQuantity price rating').lean(),
+      Order.find({ createdAt: { $gte: thirtyDA } }).lean(),
+      Review.find({ createdAt: { $gte: thirtyDA } }).select('rating comment').lean(),
+      User.countDocuments(),
+      User.countDocuments({ createdAt: { $gte: thirtyDA } }),
+    ]);
+
+    const totalRevenue  = recentOrders.reduce((s, o) => s + (o.total ?? 0), 0);
+    const avgOrderValue = recentOrders.length ? totalRevenue / recentOrders.length : 0;
+    const avgRating     = recentReviews.length
+      ? recentReviews.reduce((s, r) => s + ((r as any).rating ?? 0), 0) / recentReviews.length
+      : 0;
+    const lowStock  = products.filter(p => (p as any).stockQuantity > 0 && (p as any).stockQuantity < 5);
+    const outOfStock = products.filter(p => (p as any).stockQuantity === 0);
+
+    const itemMap: Record<string, { name: string; qty: number; revenue: number }> = {};
+    for (const o of recentOrders) {
+      for (const item of o.items) {
+        if (!itemMap[item.name]) itemMap[item.name] = { name: item.name, qty: 0, revenue: 0 };
+        itemMap[item.name].qty     += item.quantity ?? 1;
+        itemMap[item.name].revenue += (item.price ?? 0) * (item.quantity ?? 1);
+      }
+    }
+    const topProducts = Object.values(itemMap).sort((a, b) => b.revenue - a.revenue).slice(0, 5);
+
+    const prompt = `You are a business intelligence analyst for BikersHub, a motorcycle accessories e-commerce platform.
+Analyze the following real store data and provide actionable business insights.
+
+=== INVENTORY ===
+Total products: ${products.length}
+Low stock (1–4 units): ${lowStock.map(p => `${p.name} (${(p as any).stockQuantity} left)`).slice(0,5).join(', ') || 'None'}
+Out of stock: ${outOfStock.map(p => p.name).slice(0, 5).join(', ') || 'None'}
+
+=== SALES (Last 30 days) ===
+Total orders: ${recentOrders.length}
+Total revenue: ₹${totalRevenue.toFixed(2)}
+Average order value: ₹${avgOrderValue.toFixed(2)}
+Top selling products: ${topProducts.map(p => `${p.name} (${p.qty} units, ₹${p.revenue.toFixed(0)})`).join(', ') || 'No sales yet'}
+
+=== REVIEWS (Last 30 days) ===
+Total reviews: ${recentReviews.length}
+Average rating: ${avgRating.toFixed(1)} / 5
+
+=== CUSTOMERS ===
+Total registered users: ${totalUsers}
+New users (last 30 days): ${newUsers}
+
+Based on this data, provide 4–6 specific, actionable insights. Return ONLY valid JSON (no markdown, no code fences):
+{
+  "summary": "2–3 sentence executive summary of the platform health",
+  "insights": [
+    {
+      "type": "inventory|revenue|customers|reviews|sales",
+      "severity": "high|medium|low|info",
+      "title": "Short title (max 8 words)",
+      "description": "Specific observation based on the data above (1–2 sentences)",
+      "action": "Concrete recommended action"
+    }
+  ]
+}`;
+
+    // Dynamic import to avoid top-level issues if package not installed
+    const { GoogleGenerativeAI } = await import('@google/generative-ai' as string as any);
+    const genAI = new GoogleGenerativeAI(apiKey);
+    const model = genAI.getGenerativeModel({ model: 'gemini-3-flash-preview' });
+
+    const result = await model.generateContent(prompt);
+    const text   = result.response.text();
+
+    // Extract JSON block from response
+    const jsonMatch = text.match(/\{[\s\S]*\}/);
+    if (!jsonMatch) throw new Error('Gemini returned an unexpected response format');
+
+    const parsed = JSON.parse(jsonMatch[0]);
+    res.json({ ...parsed, generatedAt: new Date().toISOString() });
+  } catch (err: any) {
+    res.status(500).json({ message: err.message });
+  }
+});
+
 /* ═══════════════════════════════════════════════════════════
    REVIEWS  –  GET /api/admin/reviews
    ═══════════════════════════════════════════════════════════ */

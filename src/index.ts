@@ -26,6 +26,7 @@ app.use(
   cors({
     origin: [
       process.env.FRONTEND_URL ?? 'http://localhost:8080',
+      'http://localhost:8082',  // Admin frontend
       'http://localhost:5173',  // Vite default
       'https://bikershub-system-admin.vercel.app',
     ],
@@ -42,9 +43,10 @@ app.use(express.urlencoded({ extended: true }));
 app.get('/health', (_req, res) => res.json({ status: 'ok' }));
 
 // ── API Routes ─────────────────────────────────────────────
-app.use('/api/auth',     authRoutes);
-app.use('/api/products', productRoutes);
-app.use('/api/bikes',    bikesRoutes);
+app.use('/api/auth',            authRoutes);
+app.use('/api/products',        productRoutes);
+app.use('/api/admin/products',  productRoutes);   // also expose under admin prefix
+app.use('/api/bikes',           bikesRoutes);
 app.use('/api/cart',     cartRoutes);
 app.use('/api/orders',   orderRoutes);
 app.use('/api/users',    userRoutes);

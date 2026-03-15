@@ -97,10 +97,11 @@ router.post(
     try {
       const files = (req.files ?? []) as Express.Multer.File[];
       const images = files.map(f => (f as any).path as string);
+      const body = parseProductBody({ ...req.body });
       const product = await Product.create({
-        ...req.body,
-        image: images[0] ?? req.body.image,
-        images,
+        ...body,
+        image: images[0] ?? body.image,
+        images: images.length ? images : body.images,
       });
       res.status(201).json(product);
     } catch (err: any) {
@@ -118,13 +119,13 @@ router.put(
   async (req: Request, res: Response) => {
     try {
       const files = (req.files ?? []) as Express.Multer.File[];
-      const updates: Record<string, unknown> = { ...req.body };
+      const updates = parseProductBody({ ...req.body });
       if (files.length) {
         const imageUrls = files.map(f => (f as any).path as string);
         updates.images = imageUrls;
         updates.image  = imageUrls[0];
       }
-      const product = await Product.findByIdAndUpdate(req.params.id, updates, { new: true });
+      const product = await Product.findByIdAndUpdate(req.params.id, updates, { new: true, runValidators: true });
       if (!product) return res.status(404).json({ message: 'Product not found' });
       res.json(product);
     } catch (err: any) {
@@ -153,6 +154,64 @@ router.get('/bulk-import/template', protect, adminOnly, (_req: Request, res: Res
   res.setHeader('Content-Type', 'text/csv');
   res.setHeader('Content-Disposition', 'attachment; filename="products-template.csv"');
   res.send(csvHeader + csvExample);
+});
+
+/* ── POST /api/products/bulk-import-json  (Admin) ────────── */
+router.post('/bulk-import-json', protect, adminOnly, async (req: Request, res: Response) => {
+  try {
+    const rows: any[] = Array.isArray(req.body) ? req.body : (Array.isArray(req.body?.rows) ? req.body.rows : []);
+    if (rows.length === 0)
+      return res.status(400).json({ message: 'No rows provided', imported: 0, skipped: 0, errors: [] });
+
+    const results: { imported: number; skipped: number; errors: { row: number; reason: string }[] } =
+      { imported: 0, skipped: 0, errors: [] };
+
+    for (let i = 0; i < rows.length; i++) {
+      const row = rows[i];
+      const name        = row.name?.trim()        ?? '';
+      const description = row.description?.trim() ?? '';
+      const priceRaw    = row.price?.toString().trim() ?? '';
+      const category    = row.category?.trim()    ?? '';
+      const brand       = row.brand?.trim()       ?? '';
+      const stockRaw    = row.stock?.toString().trim() ?? '0';
+
+      if (!name || !priceRaw) {
+        results.errors.push({ row: i + 1, reason: `Missing required field: ${!name ? 'name' : 'price'}` });
+        results.skipped++;
+        continue;
+      }
+      const price = parseFloat(priceRaw);
+      const stock = parseInt(stockRaw, 10) || 0;
+      if (isNaN(price)) {
+        results.errors.push({ row: i + 1, reason: 'Invalid price value' });
+        results.skipped++;
+        continue;
+      }
+      const imagesRaw = row.images ?? '';
+      const tagsRaw   = row.tags   ?? '';
+      const images = typeof imagesRaw === 'string'
+        ? imagesRaw.split('|').map((s: string) => s.trim()).filter(Boolean)
+        : Array.isArray(imagesRaw) ? imagesRaw : [];
+      const tags = typeof tagsRaw === 'string'
+        ? tagsRaw.split(',').map((s: string) => s.trim()).filter(Boolean)
+        : Array.isArray(tagsRaw) ? tagsRaw : [];
+      try {
+        await Product.create({
+          name, description, price, category, brand,
+          stockQuantity: stock, inStock: stock > 0,
+          images, tags, image: images[0] ?? '',
+        });
+        results.imported++;
+      } catch (err: any) {
+        results.errors.push({ row: i + 1, reason: err.message });
+        results.skipped++;
+      }
+    }
+    const statusCode = results.errors.length > 0 && results.imported === 0 ? 422 : 201;
+    res.status(statusCode).json(results);
+  } catch (err: any) {
+    res.status(500).json({ message: err.message });
+  }
 });
 
 /* ── POST /api/products/bulk-import  (Admin) ─────────────── */
@@ -227,6 +286,59 @@ router.post('/bulk-import', protect, adminOnly, csvUpload, async (req: Request, 
 // ── Helpers ──────────────────────────────────────────────────
 function escapeRegex(str: string): string {
   return str.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+}
+
+/**
+ * Normalise a raw request body so that array / embedded-object fields
+ * are always in the shape Mongoose expects, even when the client sends
+ * them as plain strings (common with multipart/form-data).
+ */
+function parseProductBody(body: Record<string, unknown>): Record<string, unknown> {
+  const out = { ...body };
+
+  // Helper: try to JSON-parse a value; return original on failure.
+  const tryJSON = (v: unknown): unknown => {
+    if (typeof v !== 'string') return v;
+    try { return JSON.parse(v); } catch { return v; }
+  };
+
+  // --- colors: must be { name: string; hex: string }[] ---
+  if (out.colors !== undefined) {
+    const parsed = tryJSON(out.colors);
+    if (Array.isArray(parsed)) {
+      // Each element may be an object already or a plain string.
+      out.colors = (parsed as unknown[]).map(c => {
+        if (c && typeof c === 'object' && 'name' in (c as object)) return c;
+        return { name: String(c), hex: '' };
+      });
+    } else if (typeof parsed === 'string') {
+      // Comma-separated list of color names e.g. "Black,Red"
+      out.colors = parsed.split(',').map(s => ({ name: s.trim(), hex: '' })).filter(c => c.name);
+    }
+    // If it's already an object (single item sent without array wrapper)
+    else if (parsed && typeof parsed === 'object') {
+      out.colors = [parsed];
+    }
+  }
+
+  // --- Simple string[] fields ---
+  for (const field of ['sizes', 'images', 'compatibleBikes'] as const) {
+    if (out[field] !== undefined) {
+      const parsed = tryJSON(out[field]);
+      if (Array.isArray(parsed)) {
+        out[field] = parsed;
+      } else if (typeof parsed === 'string') {
+        out[field] = parsed.split(',').map((s: string) => s.trim()).filter(Boolean);
+      }
+    }
+  }
+
+  // --- specifications: may arrive as a JSON string ---
+  if (out.specifications !== undefined) {
+    out.specifications = tryJSON(out.specifications);
+  }
+
+  return out;
 }
 
 /** Minimal RFC-4180-compatible CSV parser */

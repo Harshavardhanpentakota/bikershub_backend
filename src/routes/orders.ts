@@ -90,7 +90,7 @@ router.get('/', protect, adminOnly, async (req: Request, res: Response) => {
 /* ── GET /api/orders/:id ─────────────────────────────────── */
 router.get('/:id', protect, async (req: Request, res: Response) => {
   try {
-    const order = await Order.findById(req.params.id);
+    const order = await Order.findById(req.params.id).populate('user', 'name email');
     if (!order) return res.status(404).json({ message: 'Order not found' });
 
     // Only owner or admin can view
