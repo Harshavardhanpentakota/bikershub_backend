@@ -11,7 +11,7 @@ GOOGLE_REDIRECT_URI=http://localhost:5000/api/auth/google/callback
 GOOGLE_OAUTH_SUCCESS_REDIRECT=http://localhost:5173/auth/google/callback
 ```
 
-All protected routes require the header:
+All protected routes -  require the header:
 ```
 Authorization: Bearer <token>
 ```
