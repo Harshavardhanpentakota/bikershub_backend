@@ -1,6 +1,7 @@
 import { Router, Request, Response } from 'express';
 import Order from '../models/Order';
 import { protect, adminOnly } from '../middleware/auth';
+import { createShiprocketOrder } from '../services/shiprocket';
 
 const router = Router();
 
@@ -10,6 +11,10 @@ router.post('/', protect, async (req: Request, res: Response) => {
     const { items, shippingAddress, shippingMethod = 'standard', paymentMethod = 'cod' } = req.body;
 
     if (!items?.length) return res.status(400).json({ message: 'Order must have at least one item' });
+
+    // Reject legacy UPI-direct; only cod / razorpay are supported
+    if (!['cod', 'razorpay'].includes(paymentMethod))
+      return res.status(400).json({ message: 'Unsupported payment method' });
 
     const shippingCost = shippingMethod === 'express' ? 149 : 0;
     const subtotal     = items.reduce((s: number, i: any) => s + i.price * i.quantity, 0);
@@ -25,6 +30,39 @@ router.post('/', protect, async (req: Request, res: Response) => {
       shippingCost,
       total,
     });
+
+    // For COD orders, create Shiprocket order immediately (non-blocking)
+    if (paymentMethod === 'cod' && process.env.SHIPROCKET_EMAIL) {
+      const userDoc = req.user as any;
+      createShiprocketOrder({
+        orderId:       order._id.toString(),
+        orderDate:     (order as any).createdAt?.toISOString() ?? new Date().toISOString(),
+        customerName:  shippingAddress.name,
+        customerEmail: userDoc.email ?? '',
+        phone:         shippingAddress.phone,
+        address:       shippingAddress.street,
+        city:          shippingAddress.city,
+        state:         shippingAddress.state,
+        pincode:       shippingAddress.zip,
+        country:       shippingAddress.country || 'India',
+        paymentMethod: 'COD',
+        subtotal,
+        shippingCost,
+        items: items.map((i: any) => ({
+          name:  i.name,
+          sku:   (i.product?.toString() ?? 'UNKNOWN').slice(-8),
+          units: i.quantity,
+          price: i.price,
+        })),
+      })
+        .then(sr => Order.findByIdAndUpdate(order._id, {
+          shiprocketOrderId:    String(sr.order_id),
+          shiprocketShipmentId: String(sr.shipment_id),
+          ...(sr.awb_code    ? { shiprocketAwb:     sr.awb_code    } : {}),
+          ...(sr.courier_name? { shiprocketCourier: sr.courier_name} : {}),
+        }))
+        .catch(err => console.error('[Shiprocket] COD order creation failed:', err.message));
+    }
 
     res.status(201).json(order);
   } catch (err: any) {

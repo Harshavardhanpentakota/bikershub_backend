@@ -24,7 +24,7 @@ export interface IOrder extends Document {
   items: IOrderItem[];
   shippingAddress: IShippingAddress;
   shippingMethod: 'standard' | 'express';
-  paymentMethod: 'cod' | 'razorpay' | 'upi';
+  paymentMethod: 'cod' | 'razorpay';
   paymentStatus: 'pending' | 'paid' | 'failed';
   razorpayOrderId?: string;
   razorpayPaymentId?: string;
@@ -33,6 +33,10 @@ export interface IOrder extends Document {
   total: number;
   status: 'pending' | 'processing' | 'shipped' | 'delivered' | 'cancelled';
   trackingId?: string;
+  shiprocketOrderId?: string;
+  shiprocketShipmentId?: string;
+  shiprocketAwb?: string;
+  shiprocketCourier?: string;
 }
 
 const OrderSchema = new Schema<IOrder>(
@@ -54,7 +58,7 @@ const OrderSchema = new Schema<IOrder>(
       state: String, zip: String, phone: String,
     },
     shippingMethod:    { type: String, enum: ['standard', 'express'], default: 'standard' },
-    paymentMethod:     { type: String, enum: ['cod', 'razorpay', 'upi'], default: 'cod' },
+    paymentMethod:     { type: String, enum: ['cod', 'razorpay'], default: 'cod' },
     paymentStatus:     { type: String, enum: ['pending', 'paid', 'failed'], default: 'pending' },
     razorpayOrderId:   String,
     razorpayPaymentId: String,
@@ -66,7 +70,11 @@ const OrderSchema = new Schema<IOrder>(
       enum: ['pending', 'processing', 'shipped', 'delivered', 'cancelled'],
       default: 'pending',
     },
-    trackingId: String,
+    trackingId:            String,
+    shiprocketOrderId:     String,
+    shiprocketShipmentId:  String,
+    shiprocketAwb:         String,
+    shiprocketCourier:     String,
   },
   { timestamps: true }
 );

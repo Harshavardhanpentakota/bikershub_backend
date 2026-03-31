@@ -3,6 +3,7 @@ import Razorpay from 'razorpay';
 import crypto from 'crypto';
 import Order from '../models/Order';
 import { protect } from '../middleware/auth';
+import { createShiprocketOrder } from '../services/shiprocket';
 
 const router = Router();
 
@@ -53,10 +54,45 @@ router.post('/verify', protect, async (req: Request, res: Response) => {
     if (expected !== razorpaySignature)
       return res.status(400).json({ message: 'Payment verification failed' });
 
-    await Order.findByIdAndUpdate(orderId, {
-      paymentStatus:     'paid',
-      razorpayPaymentId,
-    });
+    const order = await Order.findByIdAndUpdate(
+      orderId,
+      { paymentStatus: 'paid', razorpayPaymentId },
+      { new: true },
+    ).populate('user', 'email name');
+
+    // Create Shiprocket order now that payment is confirmed (non-blocking)
+    if (order && process.env.SHIPROCKET_EMAIL) {
+      const user = order.user as any;
+      const addr = order.shippingAddress;
+      createShiprocketOrder({
+        orderId:       order._id.toString(),
+        orderDate:     (order as any).createdAt?.toISOString() ?? new Date().toISOString(),
+        customerName:  addr.name,
+        customerEmail: user?.email ?? '',
+        phone:         addr.phone,
+        address:       addr.street,
+        city:          addr.city,
+        state:         addr.state,
+        pincode:       addr.zip,
+        country:       (addr as any).country || 'India',
+        paymentMethod: 'Prepaid',
+        subtotal:      order.subtotal,
+        shippingCost:  order.shippingCost,
+        items: order.items.map((i: any) => ({
+          name:  i.name,
+          sku:   (i.product?.toString() ?? 'UNKNOWN').slice(-8),
+          units: i.quantity,
+          price: i.price,
+        })),
+      })
+        .then(sr => Order.findByIdAndUpdate(order._id, {
+          shiprocketOrderId:    String(sr.order_id),
+          shiprocketShipmentId: String(sr.shipment_id),
+          ...(sr.awb_code     ? { shiprocketAwb:     sr.awb_code     } : {}),
+          ...(sr.courier_name ? { shiprocketCourier: sr.courier_name } : {}),
+        }))
+        .catch(err => console.error('[Shiprocket] Prepaid order creation failed:', err.message));
+    }
 
     res.json({ success: true, message: 'Payment verified successfully' });
   } catch (err: any) {
