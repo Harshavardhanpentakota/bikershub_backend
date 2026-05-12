@@ -30,6 +30,8 @@ app.use(
       'http://localhost:8082',  // Admin frontend
       'http://localhost:5173',  // Vite default
       'https://bikershub-system-admin.vercel.app',
+      'https://www.bikershub.shop',
+      'https://admin.bikershub.shop'
     ],
     credentials: true,
     methods: ['GET', 'POST', 'PUT', 'DELETE', 'OPTIONS'],
