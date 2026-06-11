@@ -208,7 +208,7 @@ router.put('/:id', protect, adminOnly, async (req: Request, res: Response) => {
     const updates: Record<string, unknown> = {};
     if (name     !== undefined) updates.name     = name;
     if (email    !== undefined) updates.email    = email;
-    if (role     !== undefined) updates.role     = role;
+    if (role     !== undefined) updates.role     = role === 'user' ? 'customer' : role;
     if (isActive !== undefined) updates.isActive = isActive;
 
     const user = await User.findByIdAndUpdate(req.params.id, updates, { new: true, runValidators: true })

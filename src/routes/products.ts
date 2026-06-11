@@ -19,7 +19,7 @@ router.get('/', async (req: Request, res: Response) => {
       isNew,            // "true"
       search,
       sort,             // field name; prefix with "-" for descending (e.g. "-discount")
-      page  = '1',
+      page = '1',
       limit = '20',
     } = req.query as Record<string, string>;
 
@@ -28,12 +28,12 @@ router.get('/', async (req: Request, res: Response) => {
     if (category) query.category = { $regex: `^${escapeRegex(category)}$`, $options: 'i' };
     if (search) {
       query.$or = [
-        { name:        { $regex: escapeRegex(search), $options: 'i' } },
+        { name: { $regex: escapeRegex(search), $options: 'i' } },
         { description: { $regex: escapeRegex(search), $options: 'i' } },
-        { category:    { $regex: escapeRegex(search), $options: 'i' } },
+        { category: { $regex: escapeRegex(search), $options: 'i' } },
       ];
     }
-    if (badge)    query.badge  = badge;
+    if (badge) query.badge = badge;
     if (isNew === 'true') query.isNew = true;
 
     // Compatible bike filtering — priority: full string > brand+model > brand-only
@@ -56,14 +56,14 @@ router.get('/', async (req: Request, res: Response) => {
     // Sorting
     let sortObj: Record<string, 1 | -1> = {};
     if (sort) {
-      const desc  = sort.startsWith('-');
+      const desc = sort.startsWith('-');
       const field = desc ? sort.slice(1) : sort;
       sortObj[field] = desc ? -1 : 1;
     }
 
-    const pageNum  = Math.max(1, parseInt(page,  10) || 1);
+    const pageNum = Math.max(1, parseInt(page, 10) || 1);
     const limitNum = Math.min(100, parseInt(limit, 10) || 20);
-    const skip     = (pageNum - 1) * limitNum;
+    const skip = (pageNum - 1) * limitNum;
 
     const [products, total] = await Promise.all([
       Product.find(query).sort(sortObj).skip(skip).limit(limitNum).lean(),
@@ -123,7 +123,7 @@ router.put(
       if (files.length) {
         const imageUrls = files.map(f => (f as any).path as string);
         updates.images = imageUrls;
-        updates.image  = imageUrls[0];
+        updates.image = imageUrls[0];
       }
       const product = await Product.findByIdAndUpdate(req.params.id, updates, { new: true, runValidators: true });
       if (!product) return res.status(404).json({ message: 'Product not found' });
@@ -147,10 +147,9 @@ router.delete('/:id', protect, adminOnly, async (req: Request, res: Response) =>
 
 /* ── GET /api/products/bulk-import/template  (Admin) ─────── */
 router.get('/bulk-import/template', protect, adminOnly, (_req: Request, res: Response) => {
-  const csvHeader = 'name,description,price,category,brand,stock,images,tags\n';
+  const csvHeader = 'name,description,price,originalPrice,discount,rating,reviewCount,category,compatibleBikes,sizes,colors,badge,image,images,specifications,inStock,stockQuantity,brand,tags\n';
   const csvExample =
-    'Racing Helmet Pro,"Full-face motorcycle helmet with visor",199.99,Helmets,RacePro,50,' +
-    'https://cdn.example.com/img1.jpg,"helmet,racing,safety"\n';
+    'Stealth Carbon Full-Face Helmet,"Premium carbon fiber full-face helmet with advanced ventilation",189.99,249.99,24,4.8,342,Helmets,All,S|M|L|XL,"Matte Black:#1a1a1a|Gloss White:#f5f5f5|Racing Orange:#FF6A2B",bestseller,https://images.unsplash.com/photo-1558618666-fcd25c85f7e7,https://images.unsplash.com/photo-1558618666-fcd25c85f7e7|https://images.unsplash.com/photo-1609634700683-85843a0c1135,"Material:Carbon Fiber|Weight:1.3 kg|Certification:DOT, ECE 22.06",true,50,Yamaha,"helmet,safety"\n';
   res.setHeader('Content-Type', 'text/csv');
   res.setHeader('Content-Disposition', 'attachment; filename="products-template.csv"');
   res.send(csvHeader + csvExample);
@@ -168,12 +167,10 @@ router.post('/bulk-import-json', protect, adminOnly, async (req: Request, res: R
 
     for (let i = 0; i < rows.length; i++) {
       const row = rows[i];
-      const name        = row.name?.trim()        ?? '';
+      const name = row.name?.trim() ?? '';
       const description = row.description?.trim() ?? '';
-      const priceRaw    = row.price?.toString().trim() ?? '';
-      const category    = row.category?.trim()    ?? '';
-      const brand       = row.brand?.trim()       ?? '';
-      const stockRaw    = row.stock?.toString().trim() ?? '0';
+      const priceRaw = row.price?.toString().trim() ?? '';
+      const category = row.category?.trim() ?? '';
 
       if (!name || !priceRaw) {
         results.errors.push({ row: i + 1, reason: `Missing required field: ${!name ? 'name' : 'price'}` });
@@ -181,25 +178,67 @@ router.post('/bulk-import-json', protect, adminOnly, async (req: Request, res: R
         continue;
       }
       const price = parseFloat(priceRaw);
-      const stock = parseInt(stockRaw, 10) || 0;
       if (isNaN(price)) {
         results.errors.push({ row: i + 1, reason: 'Invalid price value' });
         results.skipped++;
         continue;
       }
-      const imagesRaw = row.images ?? '';
-      const tagsRaw   = row.tags   ?? '';
-      const images = typeof imagesRaw === 'string'
-        ? imagesRaw.split('|').map((s: string) => s.trim()).filter(Boolean)
-        : Array.isArray(imagesRaw) ? imagesRaw : [];
+
+      const originalPriceRaw = row.originalprice?.toString().trim() || row.originalPrice?.toString().trim() || '';
+      const originalPrice = originalPriceRaw ? parseFloat(originalPriceRaw) : undefined;
+
+      const discountRaw = row.discount?.toString().trim() || '';
+      const discount = discountRaw ? parseFloat(discountRaw) : undefined;
+
+      const ratingRaw = row.rating?.toString().trim() || '';
+      const rating = ratingRaw ? parseFloat(ratingRaw) : 0;
+
+      const reviewCountRaw = row.reviewcount?.toString().trim() || row.reviewCount?.toString().trim() || '';
+      const reviewCount = reviewCountRaw ? parseInt(reviewCountRaw, 10) : 0;
+
+      const badge = row.badge?.trim() || undefined;
+      const brand = row.brand?.trim() || undefined;
+      const tagsRaw = row.tags ?? '';
       const tags = typeof tagsRaw === 'string'
         ? tagsRaw.split(',').map((s: string) => s.trim()).filter(Boolean)
         : Array.isArray(tagsRaw) ? tagsRaw : [];
+
+      const stockRaw = (row.stockquantity ?? row.stockQuantity ?? row.stock ?? row.stockQuantity ?? '').toString().trim();
+      const stockQuantity = stockRaw ? parseInt(stockRaw, 10) || 0 : 0;
+
+      const inStockRaw = row.instock?.toString().toLowerCase().trim() || row.inStock?.toString().toLowerCase().trim() || '';
+      let inStock = true;
+      if (inStockRaw === 'false' || inStockRaw === 'no' || inStockRaw === '0') {
+        inStock = false;
+      } else if (inStockRaw === '' && stockRaw !== '') {
+        inStock = stockQuantity > 0;
+      }
+
+      const sizesRaw = row.sizes ?? '';
+      const sizes = typeof sizesRaw === 'string'
+        ? sizesRaw.split(/[|,]/).map((s: string) => s.trim()).filter(Boolean)
+        : Array.isArray(sizesRaw) ? sizesRaw : [];
+
+      const compatibleBikesRaw = row.compatiblebikes ?? row.compatibleBikes ?? '';
+      const compatibleBikes = typeof compatibleBikesRaw === 'string'
+        ? compatibleBikesRaw.split(/[|,]/).map((s: string) => s.trim()).filter(Boolean)
+        : Array.isArray(compatibleBikesRaw) ? compatibleBikesRaw : [];
+
+      const colors = parseColors(row.colors);
+      const specifications = parseSpecifications(row.specifications);
+
+      const imagesRaw = row.images ?? '';
+      const images = typeof imagesRaw === 'string'
+        ? imagesRaw.split(/[|,]/).map((s: string) => s.trim()).filter(Boolean)
+        : Array.isArray(imagesRaw) ? imagesRaw : [];
+
+      const image = row.image?.trim() || images[0] || '';
+
       try {
         await Product.create({
-          name, description, price, category, brand,
-          stockQuantity: stock, inStock: stock > 0,
-          images, tags, image: images[0] ?? '',
+          name, description, price, originalPrice, discount, rating, reviewCount,
+          category, compatibleBikes, sizes, colors, badge, image, images,
+          specifications, inStock, stockQuantity, brand, tags
         });
         results.imported++;
       } catch (err: any) {
@@ -219,8 +258,8 @@ router.post('/bulk-import', protect, adminOnly, csvUpload, async (req: Request, 
   try {
     if (!req.file) return res.status(400).json({ message: 'CSV file is required' });
 
-    const text   = req.file.buffer.toString('utf-8');
-    const rows   = parseCSV(text);
+    const text = req.file.buffer.toString('utf-8');
+    const rows = parseCSV(text);
     if (rows.length < 2)
       return res.status(422).json({ message: 'CSV has no data rows', imported: 0, skipped: 0, errors: [] });
 
@@ -234,14 +273,15 @@ router.post('/bulk-import', protect, adminOnly, csvUpload, async (req: Request, 
       const row = rows[i];
       if (row.every(c => !c)) continue;   // skip blank lines
 
-      const get = (col: string) => row[idx(col)]?.trim() ?? '';
+      const get = (col: string) => {
+        const index = idx(col);
+        return index > -1 ? row[index]?.trim() ?? '' : '';
+      };
 
-      const name        = get('name');
+      const name = get('name');
       const description = get('description');
-      const priceRaw    = get('price');
-      const category    = get('category');
-      const brand       = get('brand');
-      const stockRaw    = get('stock');
+      const priceRaw = get('price');
+      const category = get('category');
 
       if (!name || !priceRaw) {
         results.errors.push({ row: i + 1, reason: `Missing required field: ${!name ? 'name' : 'price'}` });
@@ -250,24 +290,59 @@ router.post('/bulk-import', protect, adminOnly, csvUpload, async (req: Request, 
       }
 
       const price = parseFloat(priceRaw);
-      const stock = parseInt(stockRaw, 10) || 0;
       if (isNaN(price)) {
         results.errors.push({ row: i + 1, reason: 'Invalid price value' });
         results.skipped++;
         continue;
       }
 
+      const originalPriceRaw = get('originalprice');
+      const originalPrice = originalPriceRaw ? parseFloat(originalPriceRaw) : undefined;
+
+      const discountRaw = get('discount');
+      const discount = discountRaw ? parseFloat(discountRaw) : undefined;
+
+      const ratingRaw = get('rating');
+      const rating = ratingRaw ? parseFloat(ratingRaw) : 0;
+
+      const reviewCountRaw = get('reviewcount');
+      const reviewCount = reviewCountRaw ? parseInt(reviewCountRaw, 10) : 0;
+
+      const badge = get('badge') || undefined;
+      const brand = get('brand') || undefined;
+      const tagsRaw = get('tags');
+      const tags = tagsRaw ? tagsRaw.split(',').map(s => s.trim()).filter(Boolean) : [];
+
+      const stockRaw = get('stockquantity') || get('stock');
+      const stockQuantity = stockRaw ? parseInt(stockRaw, 10) || 0 : 0;
+
+      const inStockRaw = get('instock');
+      let inStock = true;
+      if (inStockRaw === 'false' || inStockRaw === 'no' || inStockRaw === '0') {
+        inStock = false;
+      } else if (inStockRaw === '' && stockRaw !== '') {
+        inStock = stockQuantity > 0;
+      }
+
+      const sizesRaw = get('sizes');
+      const sizes = sizesRaw ? sizesRaw.split(/[|,]/).map(s => s.trim()).filter(Boolean) : [];
+
+      const compatibleBikesRaw = get('compatiblebikes');
+      const compatibleBikes = compatibleBikesRaw ? compatibleBikesRaw.split(/[|,]/).map(s => s.trim()).filter(Boolean) : [];
+
+      const colors = parseColors(get('colors'));
+      const specifications = parseSpecifications(get('specifications'));
+
       const imagesRaw = get('images');
-      const tagsRaw   = get('tags');
-      const images    = imagesRaw ? imagesRaw.split('|').map(s => s.trim()).filter(Boolean) : [];
-      const tags      = tagsRaw   ? tagsRaw.split(',').map(s => s.trim()).filter(Boolean)   : [];
+      const images = imagesRaw ? imagesRaw.split(/[|,]/).map(s => s.trim()).filter(Boolean) : [];
+
+      const image = get('image') || images[0] || '';
 
       try {
         await Product.create({
-          name, description, price, category, brand,
-          stockQuantity: stock,
-          inStock: stock > 0,
-          images, tags, image: images[0] ?? '',
+          name, description, price, originalPrice, discount, rating, reviewCount,
+          category, compatibleBikes, sizes, colors, badge, image, images,
+          specifications, inStock, stockQuantity, brand, tags
         });
         results.imported++;
       } catch (err: any) {
@@ -283,9 +358,181 @@ router.post('/bulk-import', protect, adminOnly, csvUpload, async (req: Request, 
   }
 });
 
+/* ── POST /api/products/ai-fill  (Admin) ─────────────────── */
+router.post('/ai-fill', protect, adminOnly, async (req: Request, res: Response) => {
+  try {
+    const apiKey = process.env.GEMINI_API_KEY;
+    if (!apiKey) {
+      return res.status(503).json({ message: 'GEMINI_API_KEY is not set in backend .env.' });
+    }
+
+    const { name, category } = req.body;
+    if (!name) return res.status(400).json({ message: 'Product name is required' });
+
+    const prompt = `You are a product database builder for BikersHub, a motorcycle gear and accessories store.
+Generate realistic product details for a product named "${name}" in the category "${category || 'Accessories'}".
+Return ONLY a valid JSON object matching this schema (no markdown, no code fences):
+{
+  "description": "Premium full-face helmet / riding gloves with high protection...",
+  "price": 199.99,
+  "originalPrice": 249.99,
+  "discount": 20,
+  "sizes": ["S", "M", "L", "XL"],
+  "colors": [{"name": "Matte Black", "hex": "#1a1a1a"}],
+  "compatibleBikes": ["Yamaha YZF-R15", "KTM Duke 390"],
+  "specifications": {
+    "Material": "Carbon Fiber",
+    "Certification": "DOT Certified"
+  },
+  "badge": "new"
+}`;
+
+    const { GoogleGenerativeAI } = await import('@google/generative-ai' as string as any);
+    const genAI = new GoogleGenerativeAI(apiKey);
+    const model = genAI.getGenerativeModel({ model: 'gemini-3-flash-preview' });
+
+    const result = await model.generateContent(prompt);
+    const text = result.response.text();
+
+    const jsonMatch = text.match(/\{[\s\S]*\}/);
+    if (!jsonMatch) throw new Error('Gemini returned an unexpected response format');
+
+    const parsed = JSON.parse(jsonMatch[0]);
+    res.json(parsed);
+  } catch (err: any) {
+    res.status(500).json({ message: err.message });
+  }
+});
+
+/* ── POST /api/products/ai-scrape  (Admin) ────────────────── */
+router.post('/ai-scrape', protect, adminOnly, async (req: Request, res: Response) => {
+  try {
+    const apiKey = process.env.GEMINI_API_KEY;
+    if (!apiKey) {
+      return res.status(503).json({ message: 'GEMINI_API_KEY is not set in backend .env.' });
+    }
+
+    const { url } = req.body;
+    if (!url) return res.status(400).json({ message: 'Website URL is required' });
+
+    let pageText = '';
+    try {
+      const controller = new AbortController();
+      const id = setTimeout(() => controller.abort(), 10000);
+      const fetchRes = await fetch(url, { signal: controller.signal });
+      clearTimeout(id);
+
+      const html = await fetchRes.text();
+      pageText = html
+        .replace(/<script\b[^<]*(?:(?!<\/script>)<[^<]*)*<\/script>/gi, '')
+        .replace(/<style\b[^<]*(?:(?!<\/style>)<[^<]*)*<\/style>/gi, '')
+        .replace(/<[^>]+>/g, ' ')
+        .replace(/\s+/g, ' ')
+        .trim()
+        .slice(0, 10000);
+    } catch (fetchErr: any) {
+      console.warn(`Scraping URL ${url} directly failed, using site name simulation:`, fetchErr.message);
+    }
+
+    const prompt = `You are a product scraper agent for a motorcycle accessories shop.
+We need to extract or generate realistic product items from a webpage.
+The website URL provided is: "${url}".
+${pageText ? `Here is the raw text scraped from the page: \n\n${pageText}\n\n` : `We could not reach the page directly. Please generate 4-6 realistic, high-quality products that fit a motorcycle store from this domain/brand.`}
+
+Return ONLY a valid JSON object matching this schema (no markdown, no code fences). Generate between 4 and 6 products:
+{
+  "products": [
+    {
+      "name": "Stealth Carbon Helmet",
+      "description": "Full-face carbon fiber helmet...",
+      "price": 189.99,
+      "originalPrice": 249.99,
+      "discount": 24,
+      "rating": 4.8,
+      "reviewCount": 124,
+      "category": "Helmets",
+      "sizes": ["S", "M", "L", "XL"],
+      "colors": [{"name": "Matte Black", "hex": "#1a1a1a"}],
+      "badge": "bestseller",
+      "compatibleBikes": ["All"],
+      "specifications": {
+        "Material": "Carbon Fiber",
+        "Weight": "1.3 kg"
+      },
+      "inStock": true,
+      "stockQuantity": 50,
+      "image": "https://images.unsplash.com/photo-1558618666-fcd25c85f7e7?w=600&h=600&fit=crop",
+      "images": ["https://images.unsplash.com/photo-1558618666-fcd25c85f7e7?w=600&h=600&fit=crop"]
+    }
+  ]
+}`;
+
+    const { GoogleGenerativeAI } = await import('@google/generative-ai' as string as any);
+    const genAI = new GoogleGenerativeAI(apiKey);
+    const model = genAI.getGenerativeModel({ model: 'gemini-3-flash-preview' });
+
+    const result = await model.generateContent(prompt);
+    const text = result.response.text();
+
+    const jsonMatch = text.match(/\{[\s\S]*\}/);
+    if (!jsonMatch) throw new Error('Gemini returned an unexpected response format');
+
+    const parsed = JSON.parse(jsonMatch[0]);
+    res.json(parsed);
+  } catch (err: any) {
+    res.status(500).json({ message: err.message });
+  }
+});
+
 // ── Helpers ──────────────────────────────────────────────────
 function escapeRegex(str: string): string {
   return str.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+}
+
+function parseColors(val: any): { name: string; hex: string }[] {
+  if (Array.isArray(val)) {
+    return val.map(c => {
+      if (c && typeof c === 'object' && 'name' in (c as object)) {
+        return { name: String(c.name), hex: String((c as any).hex || '#000000') };
+      }
+      const parts = String(c).split(':');
+      return { name: parts[0]?.trim() || '', hex: parts[1]?.trim() || '#000000' };
+    }).filter(c => c.name);
+  }
+  if (typeof val === 'string' && val.trim()) {
+    return val.split(/[|,]/).map(s => {
+      const parts = s.trim().split(':');
+      return { name: parts[0]?.trim() || '', hex: parts[1]?.trim() || '#000000' };
+    }).filter(c => c.name);
+  }
+  return [];
+}
+
+function parseSpecifications(val: any): Record<string, string> {
+  let specifications: Record<string, string> = {};
+  if (typeof val === 'object' && val !== null) {
+    specifications = val;
+  } else if (typeof val === 'string' && val.trim()) {
+    const trimmed = val.trim();
+    if (trimmed.startsWith('{')) {
+      try {
+        specifications = JSON.parse(trimmed);
+      } catch (e) {
+        // ignore
+      }
+    }
+    if (Object.keys(specifications).length === 0) {
+      trimmed.split('|').forEach(pair => {
+        const index = pair.indexOf(':');
+        if (index > -1) {
+          const key = pair.substring(0, index).trim();
+          const val = pair.substring(index + 1).trim();
+          if (key) specifications[key] = val;
+        }
+      });
+    }
+  }
+  return specifications;
 }
 
 /**
@@ -306,17 +553,19 @@ function parseProductBody(body: Record<string, unknown>): Record<string, unknown
   if (out.colors !== undefined) {
     const parsed = tryJSON(out.colors);
     if (Array.isArray(parsed)) {
-      // Each element may be an object already or a plain string.
       out.colors = (parsed as unknown[]).map(c => {
-        if (c && typeof c === 'object' && 'name' in (c as object)) return c;
-        return { name: String(c), hex: '' };
-      });
+        if (c && typeof c === 'object' && 'name' in (c as object)) {
+          return { name: String((c as any).name), hex: String((c as any).hex || '#000000') };
+        }
+        const parts = String(c).split(':');
+        return { name: parts[0]?.trim() || '', hex: parts[1]?.trim() || '#000000' };
+      }).filter((c: any) => c.name);
     } else if (typeof parsed === 'string') {
-      // Comma-separated list of color names e.g. "Black,Red"
-      out.colors = parsed.split(',').map(s => ({ name: s.trim(), hex: '' })).filter(c => c.name);
-    }
-    // If it's already an object (single item sent without array wrapper)
-    else if (parsed && typeof parsed === 'object') {
+      out.colors = parsed.split(',').map(s => {
+        const parts = s.trim().split(':');
+        return { name: parts[0]?.trim() || '', hex: parts[1]?.trim() || '#000000' };
+      }).filter(c => c.name);
+    } else if (parsed && typeof parsed === 'object') {
       out.colors = [parsed];
     }
   }
@@ -328,7 +577,7 @@ function parseProductBody(body: Record<string, unknown>): Record<string, unknown
       if (Array.isArray(parsed)) {
         out[field] = parsed;
       } else if (typeof parsed === 'string') {
-        out[field] = parsed.split(',').map((s: string) => s.trim()).filter(Boolean);
+        out[field] = parsed.split(/[|,]/).map((s: string) => s.trim()).filter(Boolean);
       }
     }
   }

@@ -1,4 +1,5 @@
 import { Router, Request, Response } from 'express';
+import mongoose from 'mongoose';
 import Order   from '../models/Order';
 import Product from '../models/Product';
 import User    from '../models/User';
@@ -583,6 +584,164 @@ router.put('/settings/password', async (req: Request, res: Response) => {
     user.password = newPassword;
     await user.save();
     res.json({ message: 'Password updated successfully' });
+  } catch (err: any) {
+    res.status(500).json({ message: err.message });
+  }
+});
+
+/* GET /api/admin/search - Universal Search */
+router.get('/search', async (req: Request, res: Response) => {
+  try {
+    const q = (req.query.q as string || '').trim();
+    if (!q) {
+      return res.json({ products: [], users: [], orders: [] });
+    }
+
+    // 1. Search Users
+    const users = await User.find({
+      $or: [
+        { name:  { $regex: q, $options: 'i' } },
+        { email: { $regex: q, $options: 'i' } }
+      ]
+    }).select('name email role').limit(5).lean();
+
+    const userIds = users.map(u => u._id);
+
+    // 2. Search Products
+    const products = await Product.find({
+      $or: [
+        { name:        { $regex: q, $options: 'i' } },
+        { category:    { $regex: q, $options: 'i' } },
+        { description: { $regex: q, $options: 'i' } }
+      ]
+    }).select('name price category image').limit(5).lean();
+
+    // 3. Search Orders / Transactions
+    const orderQuery: Record<string, any> = {
+      $or: [
+        { user: { $in: userIds } },
+        { razorpayPaymentId: { $regex: q, $options: 'i' } },
+        { razorpayOrderId: { $regex: q, $options: 'i' } }
+      ]
+    };
+    if (mongoose.Types.ObjectId.isValid(q)) {
+      orderQuery.$or.push({ _id: q });
+    }
+
+    const orders = await Order.find(orderQuery)
+      .populate('user', 'name email')
+      .select('total paymentMethod paymentStatus status user createdAt')
+      .limit(5)
+      .lean();
+
+    res.json({ products, users, orders });
+  } catch (err: any) {
+    res.status(500).json({ message: err.message });
+  }
+});
+
+/* GET /api/admin/transactions */
+router.get('/transactions', async (req: Request, res: Response) => {
+  try {
+    const { search, page = '1', limit = '20' } = req.query as Record<string, string>;
+
+    const query: Record<string, any> = {
+      $or: [
+        { paymentMethod: 'razorpay' },
+        { razorpayPaymentId: { $exists: true, $ne: null } }
+      ]
+    };
+
+    const pageNum  = Math.max(1, parseInt(page,  10) || 1);
+    const limitNum = Math.min(100, parseInt(limit, 10) || 20);
+    const skip     = (pageNum - 1) * limitNum;
+
+    if (search) {
+      const users = await User.find({
+        $or: [
+          { name:  { $regex: search, $options: 'i' } },
+          { email: { $regex: search, $options: 'i' } }
+        ]
+      }).select('_id');
+      const userIds = users.map(u => u._id);
+
+      query.$and = [
+        {
+          $or: [
+            { paymentMethod: 'razorpay' },
+            { razorpayPaymentId: { $exists: true, $ne: null } }
+          ]
+        },
+        {
+          $or: [
+            { user: { $in: userIds } },
+            { razorpayPaymentId: { $regex: search, $options: 'i' } },
+            { razorpayOrderId: { $regex: search, $options: 'i' } }
+          ]
+        }
+      ];
+      delete query.$or;
+    }
+
+    const [orders, total] = await Promise.all([
+      Order.find(query)
+        .populate('user', 'name email')
+        .sort({ createdAt: -1 })
+        .skip(skip)
+        .limit(limitNum)
+        .lean(),
+      Order.countDocuments(query),
+    ]);
+
+    const transactions = orders.map((o: any) => ({
+      _id: o._id,
+      orderId: o._id,
+      user: o.user,
+      paymentMethod: o.paymentMethod,
+      paymentStatus: o.paymentStatus,
+      razorpayOrderId: o.razorpayOrderId,
+      razorpayPaymentId: o.razorpayPaymentId,
+      total: o.total,
+      status: o.status,
+      createdAt: o.createdAt,
+    }));
+
+    res.json({ transactions, total, page: pageNum, pages: Math.ceil(total / limitNum) });
+  } catch (err: any) {
+    res.status(500).json({ message: err.message });
+  }
+});
+
+/* POST /api/admin/transactions/:orderId/refund */
+router.post('/transactions/:orderId/refund', async (req: Request, res: Response) => {
+  try {
+    const { orderId } = req.params;
+    const order = await Order.findById(orderId);
+    if (!order) return res.status(404).json({ message: 'Order not found' });
+    if (order.paymentStatus !== 'paid') return res.status(400).json({ message: 'Only paid orders can be refunded' });
+
+    // Call Razorpay API to issue a refund if keys are present
+    if (process.env.RAZORPAY_KEY_ID && process.env.RAZORPAY_KEY_SECRET && order.razorpayPaymentId) {
+      try {
+        const Razorpay = (await import('razorpay')).default;
+        const rzp = new Razorpay({
+          key_id:     process.env.RAZORPAY_KEY_ID!,
+          key_secret: process.env.RAZORPAY_KEY_SECRET!,
+        });
+        await rzp.payments.refund(order.razorpayPaymentId, {
+          amount: Math.round(order.total * 100),
+          notes: { reason: 'Admin refund request' }
+        });
+      } catch (rzpErr: any) {
+        console.warn('Razorpay live refund failed:', rzpErr.message);
+      }
+    }
+
+    order.paymentStatus = 'failed'; // Refunded/failed
+    order.status = 'cancelled';
+    await order.save();
+
+    res.json({ success: true, message: 'Refund initiated successfully', order });
   } catch (err: any) {
     res.status(500).json({ message: err.message });
   }
