@@ -1,8 +1,10 @@
 import { Router, Request, Response } from 'express';
 import multer from 'multer';
+import mongoose from 'mongoose';
 import Product from '../models/Product';
 import { protect, adminOnly } from '../middleware/auth';
 import { uploadImages } from '../middleware/upload';
+import { fuzzySearchProductIds, invalidateSearchIndex } from '../services/searchIndex';
 
 const router = Router();
 const csvUpload = multer({ storage: multer.memoryStorage() }).single('file');
@@ -26,13 +28,19 @@ router.get('/', async (req: Request, res: Response) => {
     const query: Record<string, unknown> = {};
 
     if (category) query.category = { $regex: `^${escapeRegex(category)}$`, $options: 'i' };
-    if (search) {
-      query.$or = [
-        { name: { $regex: escapeRegex(search), $options: 'i' } },
-        { description: { $regex: escapeRegex(search), $options: 'i' } },
-        { category: { $regex: escapeRegex(search), $options: 'i' } },
-      ];
+
+    // Fuzzy (typo-tolerant) search over an in-memory index, ranked by relevance.
+    let fuzzyRank: Map<string, number> | null = null;
+    if (search && search.trim()) {
+      const matchedIds = await fuzzySearchProductIds(search.trim());
+      if (matchedIds.length === 0) {
+        res.json({ products: [], total: 0, page: 1, pages: 0 });
+        return;
+      }
+      fuzzyRank = new Map(matchedIds.map((id, i) => [id, i]));
+      query._id = { $in: matchedIds.map((id) => new mongoose.Types.ObjectId(id)) };
     }
+
     if (badge) query.badge = badge;
     if (isNew === 'true') query.isNew = true;
 
@@ -65,10 +73,22 @@ router.get('/', async (req: Request, res: Response) => {
     const limitNum = Math.min(100, parseInt(limit, 10) || 20);
     const skip = (pageNum - 1) * limitNum;
 
-    const [products, total] = await Promise.all([
-      Product.find(query).sort(sortObj).skip(skip).limit(limitNum).lean(),
-      Product.countDocuments(query),
-    ]);
+    let products: any[];
+    let total: number;
+
+    if (fuzzyRank && !sort) {
+      // Relevance order can't be expressed as a Mongo sort — fetch the (already
+      // threshold-bounded) match set, rank in memory, then paginate.
+      const all = await Product.find(query).lean();
+      all.sort((a: any, b: any) => (fuzzyRank!.get(String(a._id)) ?? 0) - (fuzzyRank!.get(String(b._id)) ?? 0));
+      total = all.length;
+      products = all.slice(skip, skip + limitNum);
+    } else {
+      [products, total] = await Promise.all([
+        Product.find(query).sort(sortObj).skip(skip).limit(limitNum).lean(),
+        Product.countDocuments(query),
+      ]);
+    }
 
     res.json({ products, total, page: pageNum, pages: Math.ceil(total / limitNum) });
   } catch (err: any) {
@@ -103,6 +123,7 @@ router.post(
         image: images[0] ?? body.image,
         images: images.length ? images : body.images,
       });
+      invalidateSearchIndex();
       res.status(201).json(product);
     } catch (err: any) {
       res.status(500).json({ message: err.message });
@@ -127,6 +148,7 @@ router.put(
       }
       const product = await Product.findByIdAndUpdate(req.params.id, updates, { new: true, runValidators: true });
       if (!product) return res.status(404).json({ message: 'Product not found' });
+      invalidateSearchIndex();
       res.json(product);
     } catch (err: any) {
       res.status(500).json({ message: err.message });
@@ -139,6 +161,7 @@ router.delete('/:id', protect, adminOnly, async (req: Request, res: Response) =>
   try {
     const product = await Product.findByIdAndDelete(req.params.id);
     if (!product) return res.status(404).json({ message: 'Product not found' });
+    invalidateSearchIndex();
     res.json({ message: 'Product deleted' });
   } catch (err: any) {
     res.status(500).json({ message: err.message });
@@ -246,6 +269,7 @@ router.post('/bulk-import-json', protect, adminOnly, async (req: Request, res: R
         results.skipped++;
       }
     }
+    if (results.imported > 0) invalidateSearchIndex();
     const statusCode = results.errors.length > 0 && results.imported === 0 ? 422 : 201;
     res.status(statusCode).json(results);
   } catch (err: any) {
@@ -351,6 +375,7 @@ router.post('/bulk-import', protect, adminOnly, csvUpload, async (req: Request, 
       }
     }
 
+    if (results.imported > 0) invalidateSearchIndex();
     const statusCode = results.errors.length > 0 && results.imported === 0 ? 422 : 201;
     res.status(statusCode).json(results);
   } catch (err: any) {
