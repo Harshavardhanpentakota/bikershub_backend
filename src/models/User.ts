@@ -22,6 +22,8 @@ export interface IUser extends Document {
   role: 'customer' | 'admin';
   isActive: boolean;
   bannedReason?: string;
+  resetPasswordTokenHash?: string;
+  resetPasswordExpires?: Date;
   comparePassword(plain: string): Promise<boolean>;
 }
 
@@ -42,13 +44,15 @@ const UserSchema = new Schema<IUser>(
   {
     name:      { type: String, required: true, trim: true },
     email:     { type: String, required: true, unique: true, lowercase: true },
-    password:  { type: String, required: true, minlength: 6 },
+    password:  { type: String, required: true, minlength: 8 },
     phone:     String,
     addresses: [AddressSchema],
     wishlist:      [{ type: Schema.Types.ObjectId, ref: 'Product' }],
     role:          { type: String, enum: ['customer', 'admin'], default: 'customer' },
     isActive:      { type: Boolean, default: true },
     bannedReason:  { type: String },
+    resetPasswordTokenHash: { type: String, select: false },
+    resetPasswordExpires:   { type: Date, select: false },
   },
   { timestamps: true }
 );

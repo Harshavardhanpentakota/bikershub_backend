@@ -3,6 +3,7 @@ import express from 'express';
 import cors from 'cors';
 import helmet from 'helmet';
 import morgan from 'morgan';
+import cookieParser from 'cookie-parser';
 import { connectDB } from './config/db';
 import { errorHandler } from './middleware/errorHandler';
 
@@ -42,6 +43,7 @@ app.use(
 app.use(morgan('dev'));
 app.use(express.json());
 app.use(express.urlencoded({ extended: true }));
+app.use(cookieParser());
 
 // ── Health check ────────────────────────────────────────────
 app.get('/health', (_req, res) => res.json({ status: 'ok' }));
