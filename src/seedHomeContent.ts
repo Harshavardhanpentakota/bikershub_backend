@@ -5,6 +5,7 @@ import HomeCategory from './models/HomeCategory';
 import FeaturedCollection from './models/FeaturedCollection';
 import TrendingCard from './models/TrendingCard';
 import LimitedTimeOffer from './models/LimitedTimeOffer';
+import HeroSlide from './models/HeroSlide';
 
 const HELMET_IMG = 'https://images.unsplash.com/photo-1551028719-00167b16eac5?w=300&h=300&fit=crop';
 const JACKET_IMG = 'https://images.unsplash.com/photo-1551028719-00167b16eac5?w=300&h=300&fit=crop';
@@ -83,6 +84,31 @@ const trending = [
   },
 ].map((c, i) => ({ ...c, order: i }));
 
+const hero = [
+  {
+    image: 'https://res.cloudinary.com/sfh2iaeu/image/upload/v1784442657/bikershub/home/ofb1d3pwt1b41f5fbcyf.jpg',
+    badge: '2026 RELEASES',
+    title: 'Gear Up.\nRide Bold.',
+    description: 'Premium helmets, riding gear & accessories engineered for performance and protection.',
+    cta1Label: 'Shop Now',
+    cta1Path: '/shop',
+    cta2Label: 'Explore Helmets',
+    cta2Path: '/shop?category=Helmets',
+    align: 'left',
+  },
+  {
+    image: 'https://res.cloudinary.com/sfh2iaeu/image/upload/v1784442658/bikershub/home/a2omhsbu2cknzsctxpj7.jpg',
+    badge: 'SAFETY FIRST',
+    title: 'Helmets That\nDefine You',
+    description: "DOT & ECE 22.06 certified helmets from the world's top brands — starting at ₹3,999.",
+    cta1Label: 'Browse Helmets',
+    cta1Path: '/shop?category=Helmets',
+    cta2Label: 'View All Gear',
+    cta2Path: '/shop',
+    align: 'center',
+  },
+].map((c, i) => ({ ...c, order: i }));
+
 const limitedTime = [
   {
     title: 'Limited Time',
@@ -95,22 +121,31 @@ const limitedTime = [
   },
 ];
 
+/**
+ * Only seeds a collection if it's completely empty. This is a one-time
+ * bootstrap script, not a reset button — re-running it against a DB that
+ * admins have already customized via the CRM must never touch their edits.
+ * (Learned the hard way: an earlier version unconditionally wiped +
+ * reinserted every time, which silently destroyed a live admin edit.)
+ */
+async function seedIfEmpty(Model: mongoose.Model<any>, label: string, defaults: unknown[]) {
+  const count = await Model.countDocuments();
+  if (count > 0) {
+    console.log(`Skipped ${label}: already has ${count} document(s).`);
+    return;
+  }
+  await Model.insertMany(defaults);
+  console.log(`Seeded ${defaults.length} ${label}.`);
+}
+
 async function seed() {
   await connectDB();
 
-  await HomeCategory.deleteMany({});
-  await HomeCategory.insertMany(categories);
-
-  await FeaturedCollection.deleteMany({});
-  await FeaturedCollection.insertMany(collections);
-
-  await TrendingCard.deleteMany({});
-  await TrendingCard.insertMany(trending);
-
-  await LimitedTimeOffer.deleteMany({});
-  await LimitedTimeOffer.insertMany(limitedTime);
-
-  console.log(`Seeded ${categories.length} categories, ${collections.length} collections, ${trending.length} trending cards, ${limitedTime.length} limited-time offers.`);
+  await seedIfEmpty(HomeCategory, 'categories', categories);
+  await seedIfEmpty(FeaturedCollection, 'collections', collections);
+  await seedIfEmpty(TrendingCard, 'trending cards', trending);
+  await seedIfEmpty(LimitedTimeOffer, 'limited-time offers', limitedTime);
+  await seedIfEmpty(HeroSlide, 'hero slides', hero);
 
   await mongoose.disconnect();
 }
