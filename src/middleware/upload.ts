@@ -12,3 +12,14 @@ const storage = new CloudinaryStorage({
 });
 
 export const uploadImages = multer({ storage }).array('images', 5);
+
+const homeStorage = new CloudinaryStorage({
+  cloudinary,
+  params: {
+    folder: 'bikershub/home',
+    allowed_formats: ['jpg', 'jpeg', 'png', 'webp'],
+    transformation: [{ width: 1200, height: 1200, crop: 'limit' }],
+  } as object,
+});
+
+export const uploadHomeImage = multer({ storage: homeStorage }).single('image');

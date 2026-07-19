@@ -16,6 +16,7 @@ import reviewRoutes  from './routes/reviews';
 import paymentRoutes from './routes/payment';
 import adminRoutes   from './routes/admin';
 import shiprocketRoutes from './routes/shiprocket';
+import homeContentRoutes from './routes/homeContent';
 
 connectDB();
 
@@ -57,6 +58,7 @@ app.use('/api/reviews',  reviewRoutes);
 app.use('/api/payment',  paymentRoutes);
 app.use('/api/admin',    adminRoutes);
 app.use('/api/admin/shiprocket', shiprocketRoutes);
+app.use('/api/home',     homeContentRoutes);
 
 // ── Global error handler ────────────────────────────────────
 app.use(errorHandler);

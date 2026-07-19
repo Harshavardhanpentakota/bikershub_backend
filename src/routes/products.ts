@@ -5,6 +5,7 @@ import Product from '../models/Product';
 import { protect, adminOnly } from '../middleware/auth';
 import { uploadImages } from '../middleware/upload';
 import { fuzzySearchProductIds, invalidateSearchIndex } from '../services/searchIndex';
+import { mirrorImageToCloudinary, mirrorImagesToCloudinary } from '../utils/cloudinaryMirror';
 
 const router = Router();
 const csvUpload = multer({ storage: multer.memoryStorage() }).single('file');
@@ -118,6 +119,14 @@ router.post(
       const files = (req.files ?? []) as Express.Multer.File[];
       const images = files.map(f => (f as any).path as string);
       const body = parseProductBody({ ...req.body });
+
+      // Files staged via the uploader are already on our Cloudinary; URLs pasted
+      // directly (image/images fields) still need to be mirrored in.
+      if (!images.length) {
+        if (body.images !== undefined) body.images = await mirrorImagesToCloudinary(body.images, 'bikershub/products');
+        if (body.image !== undefined) body.image = await mirrorImageToCloudinary(body.image, 'bikershub/products');
+      }
+
       const product = await Product.create({
         ...body,
         image: images[0] ?? body.image,
@@ -145,6 +154,9 @@ router.put(
         const imageUrls = files.map(f => (f as any).path as string);
         updates.images = imageUrls;
         updates.image = imageUrls[0];
+      } else {
+        if (updates.images !== undefined) updates.images = await mirrorImagesToCloudinary(updates.images, 'bikershub/products');
+        if (updates.image !== undefined) updates.image = await mirrorImageToCloudinary(updates.image, 'bikershub/products');
       }
       const product = await Product.findByIdAndUpdate(req.params.id, updates, { new: true, runValidators: true });
       if (!product) return res.status(404).json({ message: 'Product not found' });
@@ -255,12 +267,14 @@ router.post('/bulk-import-json', protect, adminOnly, async (req: Request, res: R
         ? imagesRaw.split(/[|,]/).map((s: string) => s.trim()).filter(Boolean)
         : Array.isArray(imagesRaw) ? imagesRaw : [];
 
-      const image = row.image?.trim() || images[0] || '';
+      const rawImage = row.image?.trim() || images[0] || '';
 
       try {
+        const mirroredImages = (await mirrorImagesToCloudinary(images, 'bikershub/products')) as string[];
+        const image = rawImage ? (await mirrorImageToCloudinary(rawImage, 'bikershub/products')) as string : '';
         await Product.create({
           name, description, price, originalPrice, discount, rating, reviewCount,
-          category, compatibleBikes, sizes, colors, badge, image, images,
+          category, compatibleBikes, sizes, colors, badge, image, images: mirroredImages,
           specifications, inStock, stockQuantity, brand, tags
         });
         results.imported++;
@@ -360,12 +374,14 @@ router.post('/bulk-import', protect, adminOnly, csvUpload, async (req: Request, 
       const imagesRaw = get('images');
       const images = imagesRaw ? imagesRaw.split(/[|,]/).map(s => s.trim()).filter(Boolean) : [];
 
-      const image = get('image') || images[0] || '';
+      const rawImage = get('image') || images[0] || '';
 
       try {
+        const mirroredImages = (await mirrorImagesToCloudinary(images, 'bikershub/products')) as string[];
+        const image = rawImage ? (await mirrorImageToCloudinary(rawImage, 'bikershub/products')) as string : '';
         await Product.create({
           name, description, price, originalPrice, discount, rating, reviewCount,
-          category, compatibleBikes, sizes, colors, badge, image, images,
+          category, compatibleBikes, sizes, colors, badge, image, images: mirroredImages,
           specifications, inStock, stockQuantity, brand, tags
         });
         results.imported++;
